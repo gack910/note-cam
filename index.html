@@ -213,16 +213,22 @@
     baseImage = sourceCanvas;
     canvas.width = sourceCanvas.width;
     canvas.height = sourceCanvas.height;
-    fitCanvas();
     ctx.drawImage(sourceCanvas, 0, 0);
     undoStack.length = 0;
     pushUndo();
     cameraView.style.display = 'none';
     editorView.style.display = 'flex';
+    // editorViewを表示した後でないとcanvasWrapのサイズが0になるため、表示後にフィットさせる
+    requestAnimationFrame(fitCanvas);
   }
   function fitCanvas() {
     const wrap = document.getElementById('canvasWrap');
     const r = wrap.getBoundingClientRect();
+    // 万一サイズが取得できない場合は再試行
+    if (r.width === 0 || r.height === 0) {
+      requestAnimationFrame(fitCanvas);
+      return;
+    }
     const scale = Math.min(r.width / canvas.width, r.height / canvas.height);
     canvas.style.width = (canvas.width * scale) + 'px';
     canvas.style.height = (canvas.height * scale) + 'px';
