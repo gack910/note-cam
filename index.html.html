@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#101418">
+<meta name="mobile-web-app-capable" content="yes">
+<title>サッと撮って書く</title>
+<style>
+  :root {
+    --bg: #101418;
+    --panel: #1a2027;
+    --line: #2b333d;
+    --accent: #ff5a36;
+    --text: #eef2f6;
+    --muted: #8a96a3;
+    --ok: #2dd4a7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%; width: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Roboto", "Noto Sans JP", system-ui, sans-serif;
+    overscroll-behavior: none; touch-action: none;
+  }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+
+  /* ---- camera view ---- */
+  #cameraView { position: relative; flex: 1; display: flex; flex-direction: column; }
+  #video { flex: 1; width: 100%; object-fit: cover; background: #000; }
+  #camControls {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 24px 0 calc(28px + env(safe-area-inset-bottom));
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(transparent, rgba(0,0,0,.55));
+  }
+  #shutter {
+    width: 78px; height: 78px; border-radius: 50%;
+    border: 5px solid rgba(255,255,255,.9); background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0,0,0,.25); cursor: pointer; transition: transform .08s;
+  }
+  #shutter:active { transform: scale(.92); }
+  #flipBtn {
+    position: absolute; right: 28px; bottom: calc(44px + env(safe-area-inset-bottom));
+    width: 50px; height: 50px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,.45); color: #fff; font-size: 22px; cursor: pointer;
+  }
+  #pickBtn {
+    position: absolute; left: 28px; bottom: calc(44px + env(safe-area-inset-bottom));
+    width: 50px; height: 50px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,.45); color: #fff; font-size: 20px; cursor: pointer;
+  }
+  #camHint {
+    position: absolute; top: calc(16px + env(safe-area-inset-top)); left: 0; right: 0;
+    text-align: center; color: rgba(255,255,255,.7); font-size: 13px; pointer-events: none;
+  }
+  #permError {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 32px; text-align: center;
+  }
+  #permError p { color: var(--muted); font-size: 14px; line-height: 1.7; }
+  #permError button {
+    background: var(--accent); color: #fff; border: none; padding: 12px 22px;
+    border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ---- editor view ---- */
+  #editorView { position: absolute; inset: 0; display: none; flex-direction: column; background: #000; }
+  #canvasWrap { flex: 1; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  #canvas { touch-action: none; max-width: 100%; max-height: 100%; }
+
+  #toolbar {
+    flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--line);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .swatches { display: flex; gap: 8px; flex: 1; }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+  }
+  .swatch.active { border-color: #fff; transform: scale(1.12); }
+  .tool {
+    flex: 1; padding: 11px 0; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .tool.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tool:disabled { opacity: .35; }
+  .sizes { display: flex; gap: 8px; align-items: center; }
+  .size {
+    width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .size.active { border-color: var(--accent); background: rgba(255,90,54,.15); }
+  .size .dot { background: var(--text); border-radius: 50%; }
+  .primary {
+    background: var(--ok); border-color: var(--ok); color: #06241c;
+  }
+  .label { font-size: 12px; color: var(--muted); width: 40px; }
+  .icon { font-size: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- CAMERA -->
+  <div id="cameraView">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="camHint">タップして撮影 → そのまま書き込み</div>
+    <button id="pickBtn" title="既存の写真">🖼</button>
+    <div id="camControls"><button id="shutter" aria-label="撮影"></button></div>
+    <button id="flipBtn" title="カメラ切替">⟳</button>
+    <div id="permError">
+      <p>カメラを起動できませんでした。<br>ブラウザのカメラ許可を確認するか、<br>下のボタンで写真を選んでください。</p>
+      <button id="fallbackPick">写真を選ぶ</button>
+    </div>
+    <input id="fileInput" type="file" accept="image/*" capture="environment" hidden>
+  </div>
+
+  <!-- EDITOR -->
+  <div id="editorView">
+    <div id="canvasWrap"><canvas id="canvas"></canvas></div>
+    <div id="toolbar">
+      <div class="row">
+        <span class="label">色</span>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div class="row">
+        <span class="label">太さ</span>
+        <div class="sizes" id="sizes"></div>
+        <button class="tool active" id="penTool">✏️ ペン</button>
+      </div>
+      <div class="row">
+        <button class="tool" id="undoBtn">↩️ 取り消し</button>
+        <button class="tool" id="retakeBtn">📷 撮り直す</button>
+        <button class="tool primary" id="saveBtn">⬇️ 保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const video = document.getElementById('video');
+  const cameraView = document.getElementById('cameraView');
+  const editorView = document.getElementById('editorView');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const fileInput = document.getElementById('fileInput');
+  const permError = document.getElementById('permError');
+
+  let stream = null, facing = 'environment';
+  const COLORS = ['#ff3b30', '#34c759', '#0a84ff', '#ffd60a', '#ffffff', '#111111'];
+  let color = COLORS[0], size = 6;
+  const SIZES = [3, 6, 12, 22];
+  const undoStack = [];
+
+  /* ---------- camera ---------- */
+  async function startCamera() {
+    stopCamera();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing }, audio: false
+      });
+      video.srcObject = stream;
+      permError.style.display = 'none';
+    } catch (e) {
+      permError.style.display = 'flex';
+    }
+  }
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  document.getElementById('flipBtn').onclick = () => {
+    facing = facing === 'environment' ? 'user' : 'environment';
+    startCamera();
+  };
+  document.getElementById('shutter').onclick = () => {
+    if (!stream) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return;
+    const tmp = document.createElement('canvas');
+    tmp.width = vw; tmp.height = vh;
+    const tctx = tmp.getContext('2d');
+    if (facing === 'user') { tctx.translate(vw, 0); tctx.scale(-1, 1); }
+    tctx.drawImage(video, 0, 0, vw, vh);
+    openEditor(tmp);
+  };
+
+  document.getElementById('pickBtn').onclick = () => fileInput.click();
+  document.getElementById('fallbackPick').onclick = () => fileInput.click();
+  fileInput.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      const tmp = document.createElement('canvas');
+      tmp.width = img.naturalWidth; tmp.height = img.naturalHeight;
+      tmp.getContext('2d').drawImage(img, 0, 0);
+      openEditor(tmp);
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(file);
+    fileInput.value = '';
+  };
+
+  /* ---------- editor ---------- */
+  let baseImage = null;
+  function openEditor(sourceCanvas) {
+    stopCamera();
+    baseImage = sourceCanvas;
+    canvas.width = sourceCanvas.width;
+    canvas.height = sourceCanvas.height;
+    fitCanvas();
+    ctx.drawImage(sourceCanvas, 0, 0);
+    undoStack.length = 0;
+    pushUndo();
+    cameraView.style.display = 'none';
+    editorView.style.display = 'flex';
+  }
+  function fitCanvas() {
+    const wrap = document.getElementById('canvasWrap');
+    const r = wrap.getBoundingClientRect();
+    const scale = Math.min(r.width / canvas.width, r.height / canvas.height);
+    canvas.style.width = (canvas.width * scale) + 'px';
+    canvas.style.height = (canvas.height * scale) + 'px';
+  }
+  window.addEventListener('resize', () => { if (editorView.style.display === 'flex') fitCanvas(); });
+
+  function pushUndo() {
+    if (undoStack.length > 25) undoStack.shift();
+    undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  }
+  document.getElementById('undoBtn').onclick = () => {
+    if (undoStack.length <= 1) return;
+    undoStack.pop();
+    ctx.putImageData(undoStack[undoStack.length - 1], 0, 0);
+  };
+
+  /* ---------- drawing ---------- */
+  let drawing = false, lastX = 0, lastY = 0;
+  function pos(e) {
+    const r = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return {
+      x: (p.clientX - r.left) / r.width * canvas.width,
+      y: (p.clientY - r.top) / r.height * canvas.height
+    };
+  }
+  function start(e) {
+    e.preventDefault();
+    drawing = true;
+    const { x, y } = pos(e); lastX = x; lastY = y;
+    drawLine(x, y, x, y);
+  }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const { x, y } = pos(e);
+    drawLine(lastX, lastY, x, y);
+    lastX = x; lastY = y;
+  }
+  function end() {
+    if (!drawing) return;
+    drawing = false; pushUndo();
+  }
+  function drawLine(x1, y1, x2, y2) {
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    ctx.lineWidth = size * scale;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = color;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', end);
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  canvas.addEventListener('mouseup', end);
+
+  /* ---------- tools UI ---------- */
+  const swatchesEl = document.getElementById('swatches');
+  COLORS.forEach((c, i) => {
+    const s = document.createElement('div');
+    s.className = 'swatch' + (i === 0 ? ' active' : '');
+    s.style.background = c;
+    s.onclick = () => {
+      color = c;
+      [...swatchesEl.children].forEach(x => x.classList.remove('active'));
+      s.classList.add('active');
+    };
+    swatchesEl.appendChild(s);
+  });
+  const sizesEl = document.getElementById('sizes');
+  SIZES.forEach((sz, i) => {
+    const b = document.createElement('div');
+    b.className = 'size' + (sz === size ? ' active' : '');
+    const dot = document.createElement('div');
+    dot.className = 'dot';
+    const d = Math.min(sz, 18);
+    dot.style.width = d + 'px'; dot.style.height = d + 'px';
+    b.appendChild(dot);
+    b.onclick = () => {
+      size = sz;
+      [...sizesEl.children].forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    };
+    sizesEl.appendChild(b);
+  });
+  const penTool = document.getElementById('penTool');
+  penTool.classList.add('active');
+
+  /* ---------- save / retake ---------- */
+  document.getElementById('retakeBtn').onclick = () => {
+    editorView.style.display = 'none';
+    cameraView.style.display = 'flex';
+    startCamera();
+  };
+  document.getElementById('saveBtn').onclick = async () => {
+    canvas.toBlob(async (blob) => {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const fname = `note-${ts}.png`;
+      const file = new File([blob], fname, { type: 'image/png' });
+      // Prefer share sheet (→ "フォトに保存" etc.)
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          return;
+        } catch (e) { /* user cancelled → fall back to download */ }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = fname; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, 'image/png');
+  };
+
+  startCamera();
+})();
+</script>
+</body>
+</html>
